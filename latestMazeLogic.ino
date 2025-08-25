@@ -1,3 +1,37 @@
+#include <Wire.h>
+
+#define MPU_ADDR 0x68
+#define PWR_MGMT_1  0x6B
+#define GYRO_CONFIG 0x1B
+#define GYRO_ZOUT_H 0x47
+
+
+// === Initialize MPU9250 ===
+void initMPU() {
+  Wire.begin();
+  
+  // Wake up
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(PWR_MGMT_1);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  // Gyro ±250 dps
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(GYRO_CONFIG);
+  Wire.write(0x00);
+  Wire.endTransmission();
+}
+const int buttonPin = 9;
+unsigned long lastButtonPress = 0;
+
+
+// Integration timing
+float deltat = 0.0f;
+unsigned long lastUpdate = 0;
+bool motorsEnabled = false;
+
+
 int trigf=10,echof=11,trigl=12,echol=13,trigr=14,echor=15;
 // float durationf,distancef,durationl,distancel,durationr,distancer;
 
@@ -21,10 +55,65 @@ const int baseSpeed = 100; // starting base PWM (0-255)
 const int integralLimit = 200; // tune later
 const int maxSpeed= 150 ;
 
+float yaw = 0.0f;
+float yawZero = 0.0f;    // reference so relative yaw starts at 0
+const float ANGLE_TOL = 3.0f;  // degrees tolerance for stopping the turn
+
 int matrix[16][16];
 
 enum Axis{Y,X,Y_prime,X_prime};
 Axis axis;
+
+
+float readGyroZ() {
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(GYRO_ZOUT_H);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 2, true);
+
+  int16_t gz_raw = Wire.read() << 8 | Wire.read();
+  return gz_raw / 131.0;  // dps
+}
+
+// === Turn by target angle ===
+void turnByAngle(float targetAngleDeg) {
+  float yaw = 0;
+  lastTime = millis();
+
+  // Decide direction
+  if (targetAngleDeg > 0) {
+    // Turning right
+    digitalWrite(in1,LOW);   // your motor code here
+    digitalWrite(in2,HIGH);   
+    digitalWrite(in3,LOW);   
+    digitalWrite(in4,HIGH);   
+  } else {
+    // Turning left
+    digitalWrite(in1,HIGH);   // your motor code here
+    digitalWrite(in2,LOW);   
+    digitalWrite(in3,HIGH);   
+    digitalWrite(in4,LOW); 
+  }
+
+  while (abs(yaw) < abs(targetAngleDeg)) {
+    float gz_dps = readGyroZ();
+
+    unsigned long now = millis();
+    float dt = (now - lastTime) / 1000.0;
+    lastTime = now;
+    yaw += gz_dps * dt;
+
+    Serial.print("Yaw: ");
+    Serial.println(yaw);
+  }
+
+  // Stop motors after turn
+  stop();
+
+  Serial.print("Turn complete: ");
+  Serial.println(yaw);
+}
+
 
 
 void setup() {
@@ -57,31 +146,25 @@ void setup() {
   digitalWrite(stdby,HIGH);
 }
 
-void turnRight(){
-   //sirf ghumayega
-  digitalWrite(in1,LOW);
-  digitalWrite(in2,HIGH);
-  digitalWrite(in3,LOW);
-  digitalWrite(in4,HIGH);
-  delay(180);
+void turnRight() {
+  
+  turnByAngle(90);
+  delay(2000);
+
 }
 
-void turnLeft(){
-  //sirf ghumayega
-  digitalWrite(in1,HIGH);
-  digitalWrite(in2,LOW);
-  digitalWrite(in3,HIGH);
-  digitalWrite(in4,LOW);
-  delay(180);
+void turnBack() {
+  
+  turnByAngle(180);
+  delay(2000);
+
 }
 
-void turnBack(){
-  //sirf ghumayega
-  digitalWrite(in1,HIGH);
-  digitalWrite(in2,LOW);
-  digitalWrite(in3,HIGH);
-  digitalWrite(in4,LOW);
-  delay(360);
+void turnLeft() {
+  
+  turnByAngle(-90);
+  delay(2000);
+
 }
 
 
@@ -114,8 +197,8 @@ void PID(){
   float dt = (now - lastTime) / 1000.0; // seconds
   lastTime = now;
 
-  // float leftDist  = getDist();   // cm
-  // float rightDist = getDist();  // cm
+  // float leftDist  = filteredLeftDistance();   // cm
+  // float rightDist = filteredRightDistance();  // cm
 
   float error = getDist(trigl,echol) - getDist(trigr,echor);
 
@@ -170,8 +253,8 @@ void skipACell(){
        //bilkul thoda sa delay, to just make it move forward by one block, so that turn karne ke immediately baad ek aur turn detect kar ke ghoomta na reh jaye.
   digitalWrite(in1,HIGH);
   digitalWrite(in2,LOW);
-  digitalWrite(in3,HIGH);
-  digitalWrite(in4,LOW);
+  digitalWrite(in3,LOW);
+  digitalWrite(in4,HIGH);
   delay(800);
 
   switch(axis){
@@ -202,8 +285,8 @@ void moveFront(){
 while (millis() - start < 900) {
   digitalWrite(in1,HIGH);
   digitalWrite(in2,LOW);
-  digitalWrite(in3,HIGH);
-  digitalWrite(in4,LOW);
+  digitalWrite(in3,LOW);
+  digitalWrite(in4,HIGH);
 
   PID();  // keep correcting during movement
 }
