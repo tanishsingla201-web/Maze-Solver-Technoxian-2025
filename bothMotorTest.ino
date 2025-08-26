@@ -8,7 +8,7 @@ int en1 = 5;
 int en2 = 6;
 int stdby = 8;
 
-int buttonPin = 9;  // Button at D10
+int buttonPin = 9;  // Button at D9
 
 unsigned long buttonPressTime = 0;
 bool buttonHeld = false;
