@@ -1,7 +1,3 @@
-// Motor Pins
-
-// in1,in2 = LEFT
-// in3,in4 = RIGHT
 #include <Wire.h>
 
 #define MPU_ADDR    0x68
@@ -23,9 +19,9 @@ int PWMA = 5;   // PWM - left
 int PWMB = 6;   // PWM - right
 int stdby = 8; // for TB6612; on L293D you can ignore but keep HIGH
 
-const int baseSpeed   = 110; // fwd speed
+const int baseSpeed   = 150; // fwd speed
 const int maxSpeed    = 150; // PID clamp
-const int turnPWM     = 40; // turning speed (both wheels opposite)
+const int turnPWM     = 38; // turning speed (both wheels opposite)
 
 float error = 0 ;
 
@@ -35,7 +31,7 @@ unsigned long lastButtonPress = 0;
 bool motorsEnabled = false;
 
 // === PID gains (wall following) ===
-float Kp = 1.8, Ki = 0.0, Kd = 1.0;
+float Kp = 1.824, Ki = 0.001, Kd = 0.4;
 float integral = 0;
 float lastError = 0;
 const int integralLimit = 200; // no dt -> keep small
@@ -44,11 +40,11 @@ const int integralLimit = 200; // no dt -> keep small
 unsigned long lastTime = 0;
 
 // === Maze params ===
-const int sideOpenThresh = 25;  // cm to consider cell opening
-const int stopFront      = 7;  // cm hard stop to avoid collision
-const int corridorThresh = 22;
+const int sideOpenThresh = 24;  // cm to consider cell opening
+const int stopFront      = 8;  // cm hard stop to avoid collision
+const int corridorThresh = 17;
 
-const unsigned long PID_PERIOD_MS = 50;
+const unsigned long PID_PERIOD_MS = 75;
 
 // Motor compensation
 const int   PWM_DEADBAND = 60;  // min PWM that actually moves your motors
@@ -115,19 +111,13 @@ float getDistance(int trig, int echo) {
 // -------------------- Motion primitives --------------------
 void stop() {
 
-  float leftDist  = getDistance(trigl, echol);
-  delay(3);
-  float rightDist = getDistance(trigr, echor);
-  delay(3);
-  float frontDist = getDistance(trigf, echof);
-
   digitalWrite(in1, LOW);
   digitalWrite(in2, LOW);
   digitalWrite(in3, LOW);
   digitalWrite(in4, LOW);
   analogWrite(PWMA, 0);
   analogWrite(PWMB, 0);
-  delay(250); // you wanted a 1s settle before turning
+  delay(1000);
 }
 
 void setFwdDir() {
@@ -152,11 +142,6 @@ void setInPlaceLeft() {
   digitalWrite(in3, HIGH);
   digitalWrite(in4, LOW);
 }
-
-// void moveForward() {
-//   setFwdDir();
-  
-//}
 
 void driveMotors(int left, int right) {
   // scale for asymmetry
@@ -196,19 +181,32 @@ void PID_step() {
   float rightDist = getDistance(trigr, echor);
   delay(3);
   float frontDist = getDistance(trigf, echof);
-
-  // safety first
-  // if (frontDist < stopFront) {
-  //   driveMotors(0, 0);
-  //   return;
-  // }
-
+  delay(3);
+  
   // error: center between walls
   float err = 0;
+  static float lastLeft = corridorThresh/2;
+  static float lastRight = corridorThresh/2;
+
+// when both visible
   if (leftDist < corridorThresh && rightDist < corridorThresh) {
-    err = rightDist - leftDist;   // +ve => steer right
-  } else {
-    err = 0; // straight when corridor not detected
+      err = rightDist - leftDist;
+      lastLeft  = leftDist;
+      lastRight = rightDist;
+  }
+  else if (leftDist > corridorThresh && rightDist < corridorThresh) {
+      // left wall gone → pretend it’s still at lastLeft
+      err = rightDist - lastLeft;
+      lastRight = rightDist;
+  }
+  else if (leftDist < corridorThresh && rightDist > corridorThresh) {
+      // right wall gone → pretend it’s still at lastRight
+      err = lastRight - leftDist;
+      lastLeft = leftDist;
+  }
+  else {
+      // both gone → straight
+      err = 0;
   }
 
   // timing
@@ -275,13 +273,7 @@ void turnByAngle(float targetAngleDeg) {
 
   Serial.print("Turn complete: ");
   Serial.println(yaw);
-
 }
-
-// void turnRight() { turnByAngle(-90.0f); }
-// void turnLeft()  { turnByAngle(+90.0f); }
-// void turnBack()  { turnByAngle(180.0f); }
-
 // -------------------- Button toggle --------------------
 void toggleMotors() {
   static bool lastState = HIGH;
@@ -342,35 +334,21 @@ void loop() {
     if (left > sideOpenThresh)      
     { turnByAngle(90.0f);
       setFwdDir();
-      delay(2000);
-
-       }
+      // delay(2000);
+    }
     else if (right > sideOpenThresh){ 
       turnByAngle(-90.0f);
       setFwdDir();
-      delay(2000);
+      // delay(2000);
         }
     else{ 
       turnByAngle(180.0f);
       setFwdDir();
-      delay(2000);
+      // delay(2000);
         }
   }
 
   else{
     PID_step();
-    delay(PID_PERIOD_MS);
+    // delay(PID_PERIOD_MS);
   }
-
-  // Corridor logic: go forward, but if a side is open, stop and turn
-  // if (left > sideOpenThresh) {
-  //   stop();
-  //   turnLeft();
-   
-  // } else if (right > sideOpenThresh) {
-  //   stop();
-  //   turnRight();
-  // }
-
-  // Default: drive forward with PID correction for centering
-}
