@@ -17,9 +17,9 @@ bool motorsEnabled = false;
 unsigned long lastButtonPress = 0;   // debounce timer
 
 // --- PID parameters (yours) ---
-float Kp = 4.5, Ki = 0.00, Kd = 2.15;
+float Kp = 1.824, Ki = 0.0001, Kd = 0.4;
 float error = 0, prevError = 0, integral = 0;
-int baseSpeed = 110;                 // adjust for your motors
+int baseSpeed = 150;                 // adjust for your motors
 
 // --- Targets / thresholds ---
 const int corridorThresh = 20;       // "wall is present" threshold (cm)
