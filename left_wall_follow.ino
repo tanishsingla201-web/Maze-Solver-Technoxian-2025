@@ -21,7 +21,7 @@ int stdby = 8;  // for TB6612
 
 const int baseSpeed   = 150; // fwd speed
 const int maxSpeed    = 150; // PID clamp
-const int turnPWM     = 38; // turning speed (both wheels opposite)
+const int turnPWM     = 50; // turning speed (both wheels opposite)
 
 float err = 0 ;
 
@@ -40,10 +40,10 @@ const int integralLimit = 200; // no dt -> keep small
 unsigned long lastTime = 0;
 
 // === Maze params ===
-const int sideOpenThresh = 24;  // cm to consider cell opening
-const int stopFront      = 10;  // cm hard stop to avoid collision
-const int corridorThresh = 17;
-const unsigned long PID_PERIOD_MS = 75;
+const int sideOpenThresh = 20;  // cm to consider cell opening
+const int stopFront      = 6;  // cm hard stop to avoid collision
+const int corridorThresh = 13;
+const unsigned long PID_PERIOD_MS = 65;
 
 // Motor compensation
 const int   PWM_DEADBAND = 60;  // min PWM that actually moves your motors
@@ -54,6 +54,24 @@ const float RIGHT_SCALE  = 1.00;
 float yawZero = 0.0f;           // not used but kept for future
 const float ANGLE_TOL = 3.0f;   // deg tolerance
 float gzBias = 0.0f;            // gyro bias (dps)
+
+
+
+struct Ranges {
+  float L;
+  float F;
+  float R;
+};
+
+Ranges senseOnce() {
+  Ranges z;
+  z.L = getDistance(trigl, echol);
+  delayMicroseconds(500);
+  z.R = getDistance(trigr, echor);
+  delayMicroseconds(500);
+  z.F = getDistanceF(trigf, echof);
+  return z;
+}
 
 // -------------------- MPU helpers --------------------
 static inline int16_t readGyroZRaw() {
@@ -125,14 +143,36 @@ void stop() {
   digitalWrite(in4, LOW);
   analogWrite(PWMA, 0);
   analogWrite(PWMB, 0);
-  delay(1000);
+  delay(300);
 }
 
-void setFwdDir() {
-  // optional: you can omit this entirely and just call driveMotors in PID
-  digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
-  digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
-}
+// bool detectIntersectionFrom(float L, float F, float R) {
+//   static bool lastDecision = false;
+//   static unsigned long since = 0;
+//   const unsigned long debounceMs = 60;
+
+//   bool leftOpen  = (L > sideOpenThresh);
+//   bool frontOpen = (F > stopFront);
+//   bool rightOpen = (R > sideOpenThresh);
+//   bool allClosed = (F < stopFront);
+//   bool raw = leftOpen || frontOpen || rightOpen ||;
+
+//   if (raw != lastDecision) {
+//     if (since == 0) since = millis();
+//     if (millis() - since >= debounceMs) {
+//       lastDecision = raw; since = 0;
+//     }
+//   } else {
+//     since = 0;
+//   }
+//   return lastDecision;
+//}
+
+// void setFwdDir() {
+//   // optional: you can omit this entirely and just call driveMotors in PID
+//   digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
+//   digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
+// }
 
 
 void setInPlaceRight() {
@@ -182,36 +222,26 @@ void driveMotors(int left, int right) {
 unsigned long lastPID = 0;
 float integ = 0, lastErr = 0;
 
-void PID_step() {
-  // read in an order that reduces echo overlap
-  float leftDist  = getDistance(trigl, echol);
-  delay(3);
-  float rightDist = getDistance(trigr, echor);
-  delay(3);
-  float frontDist = getDistanceF(trigf, echof);
-  delay(3);
-  
-  // error: center between walls
+void PID_step(float leftDist, float frontDist, float rightDist) {
   float err = 0;
-  static float lastLeft = corridorThresh/2;
-  static float lastRight = corridorThresh/2;
-
+  static float lastLeft = corridorThresh/2, lastRight = corridorThresh/2;
+  // read in an order that reduces echo overlap
 // when both visible
  if (leftDist < corridorThresh && rightDist < corridorThresh) {
       err = rightDist - leftDist;
       lastLeft  = leftDist;
       lastRight = rightDist;
   }
-  // else if (leftDist > corridorThresh && rightDist < corridorThresh) {
-  //     // left wall gone → pretend it’s still at lastLeft
-  //     err = rightDist - lastLeft;
-  //     lastRight = rightDist;
-  // }
-  // else if (leftDist < corridorThresh && rightDist > corridorThresh) {
-  //     // right wall gone → pretend it’s still at lastRight
-  //     err = lastRight - leftDist;
-  //     lastLeft = leftDist;
-  //}
+  else if (leftDist > corridorThresh && rightDist < corridorThresh) {
+      // left wall gone → pretend it’s still at lastLeft
+      err = rightDist - 6;
+      lastRight = rightDist;
+  }
+  else if (leftDist < corridorThresh && rightDist > corridorThresh) {
+      // right wall gone → pretend it’s still at lastRight
+      err = 6 - leftDist;
+      lastLeft = leftDist;
+  }
   else {
       // both gone → straight
       err = 0;
@@ -244,6 +274,19 @@ void PID_step() {
   Serial.print(" L:"); Serial.print(leftDist);
   Serial.print(" R:"); Serial.println(rightDist);
 }
+
+
+void runPIDForMs(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    Ranges z = senseOnce();
+    PID_step(z.L, z.F, z.R);              // see D)
+    // enforce ~PID_PERIOD_MS without blocking too hard
+    unsigned long t0 = millis();
+    while (millis() - t0 < PID_PERIOD_MS) { delay(1); }
+  }
+}
+
 
 
 // -------------------- Gyro-accurate turn --------------------
@@ -322,35 +365,27 @@ void toggleMotors() {
 }
 
 
-void leftWallControlStep() {
-  // Single read set for decision (avoid double-pinging)
-  float left  = getDistance(trigl, echol);
-  delay(3);
-  float right = getDistance(trigr, echor);
-  delay(3);
-  float front = getDistanceF(trigf, echof);
-  delay(3);
-
+void leftWallControlStep(float left, float front, float right) {
+ 
   // bool leftOpen  = (left  > sideOpenThresh);     // opening to the left
   // bool frontOK   = (front > stopFront);          // safe to go forward
   // bool rightOpen = (right > sideOpenThresh);     // opening to the right
-
+  
   // Left turn has highest priority whenever there is an opening
   if (left > sideOpenThresh) {
     // move forward slightly into the junction before stopping
     driveMotors(baseSpeed, baseSpeed);
-    delay(230);   // tune this (200–300ms works for most bots)
+    delay(180);   // tune this (200–300ms works for most bots)
     stop();
     
     turnByAngle(+90.0f);
-    PID_step();
-    delay(500);   // LEFT
+    runPIDForMs(500);   // LEFT
     return;
   }
 
   // Straight if path ahead is safe
   else if (front > stopFront) {
-    PID_step();            // keep centered while moving forward
+    PID_step(left, front, right);            // keep centered while moving forward
     return;
   }
 
@@ -361,12 +396,12 @@ void leftWallControlStep() {
     stop();
 
     turnByAngle(-90.0f);   // RIGHT
-    PID_step();
-    delay(500);
+    runPIDForMs(500);
     return;
   }
 
   else if (front < stopFront && right <sideOpenThresh && left < sideOpenThresh) {
+    stop();
     turnByAngle(+180.0f);
   }
 
@@ -399,14 +434,26 @@ void setup() {
 
   Wire.begin();
   initMPU();
-  calibrateGyroZ(600); // IMPORTANT: keep bot still during boot
+  calibrateGyroZ(1000); // IMPORTANT: keep bot still during boot
   Serial.println("MPU initialized & gyro calibrated.");
+  delay(1000);
 }
 
 
 void loop() {
-  toggleMotors();
-  if (!motorsEnabled) { driveMotors(0,0); return; }
+  // toggleMotors();
+  // if (!motorsEnabled) { driveMotors(0,0); return; }
 
-  leftWallControlStep();
+  Ranges z = senseOnce();
+   
+  leftWallControlStep(z.L, z.F, z.R);
+  static unsigned long lp = 0;
+  
+  if (millis() - lp > 100) {
+    lp = millis();
+    Serial.print("F:"); Serial.print(z.F);
+    Serial.print(" L:"); Serial.print(z.L);
+    Serial.print(" R:"); Serial.println(z.R);
+  }
+
 }
