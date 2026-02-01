@@ -75,8 +75,8 @@ void PID_step() {
 
   int leftSpeed  = baseSpeed + (int)corr;
   int rightSpeed = baseSpeed - (int)corr;
-  constrain(leftSpeed, 0, 255);
-  constrain(rightSpeed, 0, 255);
+  constrain(leftSpeed, -255, 255);
+  constrain(rightSpeed, -255, 255);
   // bot moves with new speed 
   analogWrite(PWMA, leftSpeed);
   analogWrite(PWMB, rightSpeed);
